@@ -33,7 +33,7 @@ class ACLCacheWrapper extends CacheWrapper {
 
 		// if there is no read permissions, than deny everything
 		if ($this->inShare) {
-			$minPermissions = Constants::PERMISSION_READ + Constants::PERMISSION_SHARE;
+			$minPermissions = Constants::PERMISSION_READ | Constants::PERMISSION_SHARE;
 		} else {
 			$minPermissions = Constants::PERMISSION_READ;
 		}

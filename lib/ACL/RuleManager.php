@@ -47,7 +47,14 @@ class RuleManager {
 	 * @return array<int, Rule[]>
 	 */
 	public function getRulesForFilesById(IUser $user, array $fileIds): array {
+		if (empty($fileIds)) {
+			return [];
+		}
+
 		$userMappings = $this->userMappingManager->getMappingsForUser($user);
+		if (empty($userMappings)) {
+			return [];
+		}
 
 		$query = $this->connection->getQueryBuilder();
 		$query->select(['fileid', 'mapping_type', 'mapping_id', 'mask', 'permissions'])
@@ -77,7 +84,14 @@ class RuleManager {
 	 * @return array<string, Rule[]>
 	 */
 	public function getRulesForFilesByPath(IUser $user, int $storageId, array $filePaths): array {
+		if (empty($filePaths)) {
+			return [];
+		}
+
 		$userMappings = $this->userMappingManager->getMappingsForUser($user);
+		if (empty($userMappings)) {
+			return array_fill_keys($filePaths, []);
+		}
 
 		$hashes = array_map(fn (string $path): string => md5(trim($path, '/')), $filePaths);
 
@@ -110,7 +124,14 @@ class RuleManager {
 	 * @return array<string, Rule[]>
 	 */
 	public function getRulesForFilesByIds(IUser $user, array $fileIds): array {
+		if (empty($fileIds)) {
+			return [];
+		}
+
 		$userMappings = $this->userMappingManager->getMappingsForUser($user);
+		if (empty($userMappings)) {
+			return [];
+		}
 
 		$rows = [];
 		foreach (array_chunk($fileIds, 1000) as $chunk) {
@@ -135,6 +156,9 @@ class RuleManager {
 	 */
 	public function getRulesForFilesByParent(IUser $user, int $storageId, int $parentId): array {
 		$userMappings = $this->userMappingManager->getMappingsForUser($user);
+		if (empty($userMappings)) {
+			return [];
+		}
 
 		$query = $this->connection->getQueryBuilder();
 		$query->select(['f.fileid', 'a.mapping_type', 'a.mapping_id', 'a.mask', 'a.permissions', 'f.path'])
