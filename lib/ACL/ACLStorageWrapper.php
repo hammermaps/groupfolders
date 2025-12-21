@@ -110,12 +110,34 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 			return false;
 		}
 
-		$items = [];
+		$files = [];
 		while (($file = readdir($handle)) !== false) {
 			if ($file !== '.' && $file !== '..') {
-				if ($this->checkPermissions(trim($path . '/' . $file, '/'), Constants::PERMISSION_READ)) {
-					$items[] = $file;
-				}
+				$files[] = $file;
+			}
+		}
+
+		// Batch permission check for all files to avoid N+1 query problem
+		$paths = array_map(fn(string $file): string => trim($path . '/' . $file, '/'), $files);
+		if (empty($paths)) {
+			return IteratorDirectory::wrap([]);
+		}
+
+		$rules = $this->aclManager->getRelevantRulesForPath($this->storageId, $paths, false);
+		$items = [];
+		foreach ($files as $file) {
+			$filePath = trim($path . '/' . $file, '/');
+			$permissions = $this->aclManager->getPermissionsForPathFromRules($this->folderId, $filePath, $rules);
+			
+			// Check read permissions
+			if ($this->inShare) {
+				$canRead = $permissions & (Constants::PERMISSION_READ + Constants::PERMISSION_SHARE);
+			} else {
+				$canRead = $permissions & Constants::PERMISSION_READ;
+			}
+			
+			if ($canRead) {
+				$items[] = $file;
 			}
 		}
 

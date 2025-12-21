@@ -168,6 +168,10 @@ class FolderManager {
 	 */
 	public function getAllFoldersForUserWithSize(IUser $user): array {
 		$groups = $this->groupManager->getUserGroupIds($user);
+		if (empty($groups)) {
+			return [];
+		}
+
 		$applicableMap = $this->getAllApplicable();
 
 		$query = $this->selectWithFileCache();
@@ -394,8 +398,16 @@ class FolderManager {
 	 * @return list<GroupFoldersGroup>
 	 * @throws Exception
 	 */
+	/**
+	 * @return list<GroupFoldersGroup>
+	 * @throws Exception
+	 */
 	private function getGroups(int $id): array {
 		$groups = $this->getAllApplicable()[$id] ?? [];
+		if (empty($groups)) {
+			return [];
+		}
+
 		$groups = array_map($this->groupManager->get(...), array_keys($groups));
 
 		return array_map(fn (IGroup $group): array => [
@@ -410,6 +422,10 @@ class FolderManager {
 	 */
 	private function getCircles(int $id): array {
 		$circles = $this->getAllApplicable()[$id] ?? [];
+		if (empty($circles)) {
+			return [];
+		}
+
 		$circles = array_map($this->getCircle(...), array_keys($circles));
 
 		// get nested teams
@@ -511,38 +527,47 @@ class FolderManager {
 		$groups = $this->getGroups($id);
 		$users = [];
 		foreach ($groups as $groupArray) {
-			$group = $this->groupManager->get($groupArray['gid']);
-			if ($group) {
-				$foundUsers = $this->groupManager->displayNamesInGroup($group->getGID(), $search, $limit, $offset);
-				foreach ($foundUsers as $uid => $displayName) {
-					if (!isset($users[$uid])) {
-						$users[$uid] = [
-							'uid' => (string)$uid,
-							'displayname' => $displayName,
-						];
-					}
+			$foundUsers = $this->groupManager->displayNamesInGroup($groupArray['gid'], $search, $limit, $offset);
+			foreach ($foundUsers as $uid => $displayName) {
+				if (!isset($users[$uid])) {
+					$users[$uid] = [
+						'uid' => (string)$uid,
+						'displayname' => $displayName,
+					];
 				}
 			}
 		}
 
-		foreach ($this->getCircles($id) as $circleData) {
-			$circle = $this->getCircle($circleData['sid']);
-			if ($circle === null) {
-				continue;
+		$circles = $this->getCircles($id);
+		foreach ($circles as $circleData) {
+			// getCircles already returns full circle data, no need to fetch again
+			$circlesManager = $this->getCirclesManager();
+			if ($circlesManager === null) {
+				break;
 			}
 
-			foreach ($circle->getInheritedMembers(false) as $member) {
-				if ($member->getUserType() !== Member::TYPE_USER) {
+			try {
+				$circle = $circlesManager->getCircle($circleData['sid']);
+				if ($circle === null) {
 					continue;
 				}
 
-				$uid = $member->getUserId();
-				if (!isset($users[$uid])) {
-					$users[$uid] = [
-						'uid' => $uid,
-						'displayname' => $member->getDisplayName(),
-					];
+				foreach ($circle->getInheritedMembers(false) as $member) {
+					if ($member->getUserType() !== Member::TYPE_USER) {
+						continue;
+					}
+
+					$uid = $member->getUserId();
+					if (!isset($users[$uid])) {
+						$users[$uid] = [
+							'uid' => $uid,
+							'displayname' => $member->getDisplayName(),
+						];
+					}
 				}
+			} catch (\Exception) {
+				// Skip circles that can't be retrieved
+				continue;
 			}
 		}
 
