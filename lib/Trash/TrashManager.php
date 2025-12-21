@@ -22,6 +22,10 @@ class TrashManager {
 	 * @return list<array{trash_id: int, name: string, deleted_time: int, original_location: string, folder_id: int, file_id: ?int, deleted_by: ?string}>
 	 */
 	public function listTrashForFolders(array $folderIds): array {
+		if (empty($folderIds)) {
+			return [];
+		}
+
 		$query = $this->connection->getQueryBuilder();
 		$query->select(['trash_id', 'name', 'deleted_time', 'original_location', 'folder_id', 'file_id', 'deleted_by'])
 			->from('group_folders_trash')
