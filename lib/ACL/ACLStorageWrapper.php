@@ -35,7 +35,7 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 
 		// if there is no read permissions, than deny everything
 		if ($this->inShare) {
-			$canRead = $permissions & (Constants::PERMISSION_READ + Constants::PERMISSION_SHARE);
+			$canRead = $permissions & (Constants::PERMISSION_READ | Constants::PERMISSION_SHARE);
 		} else {
 			$canRead = $permissions & Constants::PERMISSION_READ;
 		}
@@ -131,7 +131,7 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 			
 			// Check read permissions
 			if ($this->inShare) {
-				$canRead = $permissions & (Constants::PERMISSION_READ + Constants::PERMISSION_SHARE);
+				$canRead = $permissions & (Constants::PERMISSION_READ | Constants::PERMISSION_SHARE);
 			} else {
 				$canRead = $permissions & Constants::PERMISSION_READ;
 			}

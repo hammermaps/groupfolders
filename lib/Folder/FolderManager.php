@@ -398,10 +398,6 @@ class FolderManager {
 	 * @return list<GroupFoldersGroup>
 	 * @throws Exception
 	 */
-	/**
-	 * @return list<GroupFoldersGroup>
-	 * @throws Exception
-	 */
 	private function getGroups(int $id): array {
 		$groups = $this->getAllApplicable()[$id] ?? [];
 		if (empty($groups)) {
