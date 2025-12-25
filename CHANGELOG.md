@@ -5,6 +5,12 @@
 
 For newer releases please see https://github.com/nextcloud/groupfolders/releases
 
+## 21.0.0-dev.2
+
+- Refactored ACL storage wrapper with enhanced cache management
+- Implemented multi-tier caching for ACL permissions (memory and distributed cache)
+- Improved performance across requests with distributed cache support
+
 ## 13.0.0-beta1
 
 - Port to Nextcloud vue component 7
