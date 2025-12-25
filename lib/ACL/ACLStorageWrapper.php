@@ -3,24 +3,39 @@
 declare(strict_types=1);
 /**
  * SPDX-FileCopyrightText: 2019 Nextcloud GmbH and Nextcloud contributors
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier:  AGPL-3.0-or-later
  */
 
 namespace OCA\GroupFolders\ACL;
 
 use Icewind\Streams\IteratorDirectory;
 use OC\Files\Storage\Wrapper\Wrapper;
+use OCP\Cache\CappedMemoryCache;
 use OCP\Constants;
 use OCP\Files\Cache\ICache;
 use OCP\Files\Cache\IScanner;
 use OCP\Files\Storage\IConstructableStorage;
 use OCP\Files\Storage\IStorage;
+use OCP\ICache as IOCPCache;
+use OCP\ICacheFactory;
 
 class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 	private readonly ACLManager $aclManager;
 	private readonly bool $inShare;
 	private readonly int $folderId;
 	private readonly int $storageId;
+	
+	/** @var CappedMemoryCache<int> Cache for ACL permissions per path */
+	private CappedMemoryCache $permissionsCache;
+	
+	/** @var CappedMemoryCache<array> Cache for directory listings */
+	private CappedMemoryCache $directoryCache;
+	
+	/** @var IOCPCache|null Distributed cache for cross-request caching */
+	private ?IOCPCache $distributedCache = null;
+	
+	private const CACHE_TTL = 300; // 5 minutes
+	private const MEMORY_CACHE_SIZE = 512; // Number of entries to keep in memory
 
 	public function __construct(array $arguments) {
 		parent::__construct($arguments);
@@ -28,19 +43,97 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 		$this->inShare = $arguments['in_share'];
 		$this->folderId = $arguments['folder_id'];
 		$this->storageId = $arguments['storage_id'];
+		
+		// Initialize memory caches
+		$this->permissionsCache = new CappedMemoryCache(self::MEMORY_CACHE_SIZE);
+		$this->directoryCache = new CappedMemoryCache(self:: MEMORY_CACHE_SIZE);
+		
+		// Initialize distributed cache if available
+		if (isset($arguments['cache_factory']) && $arguments['cache_factory'] instanceof ICacheFactory) {
+			$this->distributedCache = $arguments['cache_factory']->createDistributed(
+				'groupfolders_acl_' . $this->storageId .  '_' . $this->folderId
+			);
+		}
+	}
+
+	/**
+	 * Get cache key for permissions
+	 */
+	private function getPermissionsCacheKey(string $path): string {
+		return 'perms_' . md5($path);
+	}
+
+	/**
+	 * Get cache key for directory listing
+	 */
+	private function getDirectoryCacheKey(string $path): string {
+		return 'dir_' . md5($path);
+	}
+
+	/**
+	 * Invalidate cache for a path and all parent directories
+	 */
+	private function invalidateCache(string $path): void {
+		// Clear from memory cache
+		$this->permissionsCache->clear();
+		$this->directoryCache->clear();
+		
+		// Clear from distributed cache
+		if ($this->distributedCache !== null) {
+			// Invalidate the specific path
+			$this->distributedCache->remove($this->getPermissionsCacheKey($path));
+			
+			// Invalidate all parent directories
+			$parts = explode('/', trim($path, '/'));
+			$currentPath = '';
+			
+			foreach ($parts as $part) {
+				$this->distributedCache->remove($this->getDirectoryCacheKey($currentPath));
+				$currentPath . = '/' . $part;
+				$this->distributedCache->remove($this->getDirectoryCacheKey($currentPath));
+			}
+			
+			// Also invalidate root
+			$this->distributedCache->remove($this->getDirectoryCacheKey(''));
+		}
 	}
 
 	private function getACLPermissionsForPath(string $path): int {
+		// Try memory cache first
+		$cacheKey = $this->getPermissionsCacheKey($path);
+		
+		if ($this->permissionsCache->hasKey($cacheKey)) {
+			return $this->permissionsCache->get($cacheKey);
+		}
+		
+		// Try distributed cache
+		if ($this->distributedCache !== null) {
+			$cached = $this->distributedCache->get($cacheKey);
+			if ($cached !== null) {
+				$this->permissionsCache->set($cacheKey, $cached);
+				return $cached;
+			}
+		}
+		
+		// Calculate permissions
 		$permissions = $this->aclManager->getACLPermissionsForPath($this->folderId, $this->storageId, $path);
 
 		// if there is no read permissions, than deny everything
 		if ($this->inShare) {
 			$canRead = $permissions & (Constants::PERMISSION_READ | Constants::PERMISSION_SHARE);
 		} else {
-			$canRead = $permissions & Constants::PERMISSION_READ;
+			$canRead = $permissions & Constants:: PERMISSION_READ;
 		}
 
-		return $canRead ? $permissions : 0;
+		$result = $canRead ? $permissions : 0;
+		
+		// Store in both caches
+		$this->permissionsCache->set($cacheKey, $result);
+		if ($this->distributedCache !== null) {
+			$this->distributedCache->set($cacheKey, $result, self::CACHE_TTL);
+		}
+		
+		return $result;
 	}
 
 	private function checkPermissions(string $path, int $permissions): bool {
@@ -60,13 +153,13 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 	}
 
 	public function isDeletable(string $path): bool {
-		return $this->checkPermissions($path, Constants::PERMISSION_DELETE)
+		return $this->checkPermissions($path, Constants:: PERMISSION_DELETE)
 			&& $this->canDeleteTree($path)
 			&& parent::isDeletable($path);
 	}
 
 	public function isSharable(string $path): bool {
-		return $this->checkPermissions($path, Constants::PERMISSION_SHARE) && parent::isSharable($path);
+		return $this->checkPermissions($path, Constants:: PERMISSION_SHARE) && parent::isSharable($path);
 	}
 
 	public function getPermissions(string $path): int {
@@ -77,8 +170,12 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 		if (str_starts_with($source, $target)) {
 			$part = substr($source, strlen($target));
 			//This is a rename of the transfer file to the original file
-			if (str_starts_with($part, '.ocTransferId')) {
-				return $this->checkPermissions($target, Constants::PERMISSION_CREATE) && parent::rename($source, $target);
+			if (str_starts_with($part, '. ocTransferId')) {
+				$result = $this->checkPermissions($target, Constants::PERMISSION_CREATE) && parent::rename($source, $target);
+				if ($result) {
+					$this->invalidateCache($target);
+				}
+				return $result;
 			}
 		}
 
@@ -89,20 +186,43 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 		}
 
 		$targetParent = dirname($target);
-		if ($targetParent === '.') {
+		if ($targetParent === '. ') {
 			$targetParent = '';
 		}
 
-		return  ($sourceParent === $targetParent
+		$result = ($sourceParent === $targetParent
 			|| $this->checkPermissions($sourceParent, Constants::PERMISSION_DELETE))
-			&& $this->checkPermissions($source, Constants::PERMISSION_UPDATE | Constants::PERMISSION_READ)
+			&& $this->checkPermissions($source, Constants:: PERMISSION_UPDATE | Constants::PERMISSION_READ)
 			&& $this->checkPermissions($target, $permissions)
 			&& parent::rename($source, $target);
+		
+		if ($result) {
+			$this->invalidateCache($source);
+			$this->invalidateCache($target);
+		}
+		
+		return $result;
 	}
 
 	public function opendir(string $path) {
 		if (!$this->checkPermissions($path, Constants::PERMISSION_READ)) {
 			return false;
+		}
+
+		// Check memory cache first
+		$cacheKey = $this->getDirectoryCacheKey($path);
+		
+		if ($this->directoryCache->hasKey($cacheKey)) {
+			return IteratorDirectory::wrap($this->directoryCache->get($cacheKey));
+		}
+		
+		// Check distributed cache
+		if ($this->distributedCache !== null) {
+			$cached = $this->distributedCache->get($cacheKey);
+			if ($cached !== null && is_array($cached)) {
+				$this->directoryCache->set($cacheKey, $cached);
+				return IteratorDirectory:: wrap($cached);
+			}
 		}
 
 		$handle = parent::opendir($path);
@@ -131,7 +251,7 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 			
 			// Check read permissions
 			if ($this->inShare) {
-				$canRead = $permissions & (Constants::PERMISSION_READ | Constants::PERMISSION_SHARE);
+				$canRead = $permissions & (Constants:: PERMISSION_READ | Constants::PERMISSION_SHARE);
 			} else {
 				$canRead = $permissions & Constants::PERMISSION_READ;
 			}
@@ -141,35 +261,71 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 			}
 		}
 
+		// Store in both caches
+		$this->directoryCache->set($cacheKey, $items);
+		if ($this->distributedCache !== null) {
+			$this->distributedCache->set($cacheKey, $items, self:: CACHE_TTL);
+		}
+
 		return IteratorDirectory::wrap($items);
 	}
 
 	public function copy(string $source, string $target): bool {
 		$permissions = $this->file_exists($target) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
-		return $this->checkPermissions($target, $permissions)
-			&& $this->checkPermissions($source, Constants::PERMISSION_READ)
+		$result = $this->checkPermissions($target, $permissions)
+			&& $this->checkPermissions($source, Constants:: PERMISSION_READ)
 			&& parent::copy($source, $target);
+		
+		if ($result) {
+			$this->invalidateCache($target);
+		}
+		
+		return $result;
 	}
 
-	public function touch(string $path, ?int $mtime = null): bool {
+	public function touch(string $path, ? int $mtime = null): bool {
 		$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
-		return $this->checkPermissions($path, $permissions) && parent::touch($path, $mtime);
+		$result = $this->checkPermissions($path, $permissions) && parent::touch($path, $mtime);
+		
+		if ($result) {
+			$this->invalidateCache($path);
+		}
+		
+		return $result;
 	}
 
 	public function mkdir(string $path): bool {
-		return $this->checkPermissions($path, Constants::PERMISSION_CREATE) && parent::mkdir($path);
+		$result = $this->checkPermissions($path, Constants::PERMISSION_CREATE) && parent::mkdir($path);
+		
+		if ($result) {
+			$this->invalidateCache($path);
+		}
+		
+		return $result;
 	}
 
 	public function rmdir(string $path): bool {
-		return $this->checkPermissions($path, Constants::PERMISSION_DELETE)
+		$result = $this->checkPermissions($path, Constants:: PERMISSION_DELETE)
 			&& $this->canDeleteTree($path)
 			&& parent::rmdir($path);
+		
+		if ($result) {
+			$this->invalidateCache($path);
+		}
+		
+		return $result;
 	}
 
 	public function unlink(string $path): bool {
-		return $this->checkPermissions($path, Constants::PERMISSION_DELETE)
+		$result = $this->checkPermissions($path, Constants::PERMISSION_DELETE)
 			&& $this->canDeleteTree($path)
 			&& parent::unlink($path);
+		
+		if ($result) {
+			$this->invalidateCache($path);
+		}
+		
+		return $result;
 	}
 
 	/**
@@ -181,30 +337,53 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 	}
 
 	public function file_put_contents(string $path, mixed $data): int|float|false {
-		$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
-		return $this->checkPermissions($path, $permissions) ? parent::file_put_contents($path, $data) : false;
+		$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE :  Constants::PERMISSION_CREATE;
+		$result = $this->checkPermissions($path, $permissions) ?  parent::file_put_contents($path, $data) : false;
+		
+		if ($result !== false) {
+			$this->invalidateCache($path);
+		}
+		
+		return $result;
 	}
 
 	public function fopen(string $path, string $mode) {
 		if ($mode === 'r' or $mode === 'rb') {
 			$permissions = Constants::PERMISSION_READ;
+			return $this->checkPermissions($path, $permissions) ? parent::fopen($path, $mode) : false;
 		} else {
-			$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
+			$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE :  Constants::PERMISSION_CREATE;
+			$result = $this->checkPermissions($path, $permissions) ? parent::fopen($path, $mode) : false;
+			
+			if ($result !== false) {
+				// Register a shutdown function to invalidate cache after write
+				$that = $this;
+				$pathCopy = $path;
+				register_shutdown_function(function() use ($that, $pathCopy) {
+					$that->invalidateCache($pathCopy);
+				});
+			}
+			
+			return $result;
 		}
-
-		return $this->checkPermissions($path, $permissions) ? parent::fopen($path, $mode) : false;
 	}
 
-	public function writeStream(string $path, $stream, ?int $size = null): int {
-		$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE : Constants::PERMISSION_CREATE;
-		return $this->checkPermissions($path, $permissions) ? parent::writeStream($path, $stream, $size) : 0;
+	public function writeStream(string $path, $stream, ? int $size = null): int {
+		$permissions = $this->file_exists($path) ? Constants::PERMISSION_UPDATE : Constants:: PERMISSION_CREATE;
+		$result = $this->checkPermissions($path, $permissions) ? parent::writeStream($path, $stream, $size) : 0;
+		
+		if ($result > 0) {
+			$this->invalidateCache($path);
+		}
+		
+		return $result;
 	}
 
 	/**
 	 * @inheritDoc
 	 */
 	public function getCache(string $path = '', ?IStorage $storage = null): ICache {
-		if (!$storage) {
+		if (! $storage) {
 			$storage = $this;
 		}
 
@@ -236,7 +415,7 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 	}
 
 	public function is_dir(string $path): bool {
-		return $this->checkPermissions($path, Constants::PERMISSION_READ)
+		return $this->checkPermissions($path, Constants:: PERMISSION_READ)
 			&& parent::is_dir($path);
 	}
 
@@ -299,7 +478,7 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 	}
 
 	public function hash(string $type, string $path, bool $raw = false): string|false {
-		if (!$this->checkPermissions($path, Constants::PERMISSION_READ)) {
+		if (!$this->checkPermissions($path, Constants:: PERMISSION_READ)) {
 			return false;
 		}
 
@@ -329,6 +508,18 @@ class ACLStorageWrapper extends Wrapper implements IConstructableStorage {
 			$data['permissions'] &= $this->getACLPermissionsForPath(rtrim($directory, '/') . '/' . $data['name']);
 
 			yield $data;
+		}
+	}
+	
+	/**
+	 * Clear all caches (useful for testing or manual cache invalidation)
+	 */
+	public function clearCache(): void {
+		$this->permissionsCache->clear();
+		$this->directoryCache->clear();
+		
+		if ($this->distributedCache !== null) {
+			$this->distributedCache->clear();
 		}
 	}
 }
