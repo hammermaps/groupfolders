@@ -10,7 +10,6 @@ declare(strict_types=1);
 namespace OCA\GroupFolders\Db;
 
 use OCP\AppFramework\Db\DoesNotExistException;
-use OCP\AppFramework\Db\Entity;
 use OCP\AppFramework\Db\QBMapper;
 use OCP\DB\Exception;
 use OCP\DB\QueryBuilder\IQueryBuilder;
@@ -95,55 +94,93 @@ class TagMapper extends QBMapper {
 		return $qb->executeQuery()->fetchAll();
 	}
 
-	private function filterGroupfolderQuery(IQueryBuilder $qb, array $filters): void {
+	/**
+	 * @param array<int, array{key: string, value?: string, includeInOutput?: bool}> $filters
+	 * @return array<string, string> Map of safe SQL alias => original tag key (for filters with includeInOutput === true)
+	 */
+	private function filterGroupfolderQuery(IQueryBuilder $qb, array $filters): array {
+		$aliasMap = [];
 		$index = 0;
 		foreach ($filters as $filter) {
-			$alias = 'filter_' . $index;
+			$tableAlias = 'filter_' . $index;
 			$joinConditions = [
-				$qb->expr()->eq($alias . '.group_folder_id', 'g.folder_id'),
-				$qb->expr()->eq($alias . '.tag_key', $qb->createNamedParameter($filter['key']))
+				$qb->expr()->eq($tableAlias . '.group_folder_id', 'g.folder_id'),
+				$qb->expr()->eq($tableAlias . '.tag_key', $qb->createNamedParameter($filter['key']))
 			];
 
 			if (isset($filter['value'])) {
-				$joinConditions[] = $qb->expr()->eq($alias . '.tag_value', $qb->createNamedParameter($filter['value']));
+				$joinConditions[] = $qb->expr()->eq($tableAlias . '.tag_value', $qb->createNamedParameter($filter['value']));
 			}
 
-			$qb->innerJoin('g', self::TABLENAME, $alias, $qb->expr()->andX(...$joinConditions));
+			$qb->innerJoin('g', self::TABLENAME, $tableAlias, $qb->expr()->andX(...$joinConditions));
 
 			if (isset($filter['includeInOutput']) && $filter['includeInOutput'] === true) {
-				$qb->selectAlias($alias . '.tag_value', $filter['key']);
+				$safeAlias = 'tag_filter_' . $index;
+				$qb->selectAlias($tableAlias . '.tag_value', $safeAlias);
+				$aliasMap[$safeAlias] = $filter['key'];
 			}
 
 			$index++;
 		}
+		return $aliasMap;
 	}
 
-	private function addAdditionalReturnTagsToGroupfolderQuery(IQueryBuilder $qb, array $additionalReturnTags): void {
+	/**
+	 * @param list<string> $additionalReturnTags
+	 * @return array<string, string> Map of safe SQL alias => original tag key
+	 */
+	private function addAdditionalReturnTagsToGroupfolderQuery(IQueryBuilder $qb, array $additionalReturnTags): array {
+		$aliasMap = [];
 		$index = 0;
 		foreach ($additionalReturnTags as $additionalReturnTag) {
-			$alias = 'additional_' . $index;
+			$tableAlias = 'additional_' . $index;
+			$safeAlias = 'tag_additional_' . $index;
 
-			$qb->leftJoin('g', self::TABLENAME, $alias, $qb->expr()->andX(
-				$qb->expr()->eq($alias . '.group_folder_id', 'g.folder_id'),
-				$qb->expr()->eq($alias . '.tag_key', $qb->createNamedParameter($additionalReturnTag))
+			$qb->leftJoin('g', self::TABLENAME, $tableAlias, $qb->expr()->andX(
+				$qb->expr()->eq($tableAlias . '.group_folder_id', 'g.folder_id'),
+				$qb->expr()->eq($tableAlias . '.tag_key', $qb->createNamedParameter($additionalReturnTag))
 			));
 
-			$qb->selectAlias($alias . '.tag_value', $additionalReturnTag);
+			$qb->selectAlias($tableAlias . '.tag_value', $safeAlias);
+			$aliasMap[$safeAlias] = $additionalReturnTag;
 
 			$index++;
 		}
+		return $aliasMap;
 	}
 
-	private function findGroupfoldersWithTagsQueryBuilder(array $filters, array $additionalReturnTags = []): IQueryBuilder {
+	/**
+	 * Remap safe SQL aliases back to their original tag key names in a result row.
+	 *
+	 * @param array<string, mixed> $row
+	 * @param array<string, string> $aliasMap safe alias => original key
+	 * @return array<string, mixed>
+	 */
+	private function remapTagAliases(array $row, array $aliasMap): array {
+		foreach ($aliasMap as $safeAlias => $originalKey) {
+			if (array_key_exists($safeAlias, $row)) {
+				$row[$originalKey] = $row[$safeAlias];
+				unset($row[$safeAlias]);
+			}
+		}
+		return $row;
+	}
+
+	/**
+	 * @return array{IQueryBuilder, array<string, string>}
+	 */
+	private function findGroupfoldersWithTagsQueryBuilder(array $filters, array $additionalReturnTags = []): array {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('g.mount_point', 'g.quota', 'g.acl', 'g.root_id', 'g.storage_id', 'g.options')
 			->selectAlias('g.folder_id', 'id')
 			->from(self::GROUP_FOLDERS_TABLENAME, 'g');
 
-		$this->filterGroupfolderQuery($qb, $filters);
-		$this->addAdditionalReturnTagsToGroupfolderQuery($qb, $additionalReturnTags);
+		$aliasMap = array_merge(
+			$this->filterGroupfolderQuery($qb, $filters),
+			$this->addAdditionalReturnTagsToGroupfolderQuery($qb, $additionalReturnTags),
+		);
 
-		return $qb;
+		return [$qb, $aliasMap];
 	}
 
 	/**
@@ -166,10 +203,13 @@ class TagMapper extends QBMapper {
 			->from(self::GROUP_FOLDERS_TABLENAME, 'g')
 			->where($qb->expr()->eq('g.folder_id', $qb->createNamedParameter($groupFolderId, IQueryBuilder::PARAM_INT)));
 
-		$this->filterGroupfolderQuery($qb, $filters);
-		$this->addAdditionalReturnTagsToGroupfolderQuery($qb, $additionalReturnTags);
+		$aliasMap = array_merge(
+			$this->filterGroupfolderQuery($qb, $filters),
+			$this->addAdditionalReturnTagsToGroupfolderQuery($qb, $additionalReturnTags),
+		);
 
-		return $this->findOneQuery($qb);
+		$row = $this->findOneQuery($qb);
+		return $this->remapTagAliases($row, $aliasMap);
 	}
 
 	/**
@@ -178,7 +218,9 @@ class TagMapper extends QBMapper {
 	 * @return array<int, array<string, mixed>>
 	 */
 	public function findGroupfoldersWithTags(array $filters, array $additionalReturnTags = []): array {
-		return $this->findGroupfoldersWithTagsQueryBuilder($filters, $additionalReturnTags)->executeQuery()->fetchAll();
+		[$qb, $aliasMap] = $this->findGroupfoldersWithTagsQueryBuilder($filters, $additionalReturnTags);
+		$rows = $qb->executeQuery()->fetchAll();
+		return array_map(fn (array $row): array => $this->remapTagAliases($row, $aliasMap), $rows);
 	}
 
 	/**
@@ -187,11 +229,12 @@ class TagMapper extends QBMapper {
 	 * @return \Generator<int, array<string, mixed>>
 	 */
 	public function findGroupfoldersWithTagsGenerator(array $filters, array $additionalReturnTags = []): \Generator {
-		$result = $this->findGroupfoldersWithTagsQueryBuilder($filters, $additionalReturnTags)->executeQuery();
+		[$qb, $aliasMap] = $this->findGroupfoldersWithTagsQueryBuilder($filters, $additionalReturnTags);
+		$result = $qb->executeQuery();
 
 		try {
 			while ($row = $result->fetch()) {
-				yield $row;
+				yield $this->remapTagAliases($row, $aliasMap);
 			}
 		} finally {
 			$result->closeCursor();

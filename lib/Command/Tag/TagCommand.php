@@ -9,7 +9,6 @@ declare(strict_types=1);
 
 namespace OCA\GroupFolders\Command\Tag;
 
-use OC\Core\Command\Base;
 use OCA\GroupFolders\Command\FolderCommand;
 use OCA\GroupFolders\Db\Tag;
 use OCA\GroupFolders\Folder\FolderManager;
@@ -58,7 +57,7 @@ abstract class TagCommand extends FolderCommand {
 	 * @return array<string, mixed>
 	 */
 	protected function formatGroupfolderArray(array $groupfolder): array {
-		$quota = $groupfolder['quota'];
+		$quota = (int)$groupfolder['quota'];
 
 		if ($quota === FolderManager::SPACE_DEFAULT) {
 			$humanQuota = 'Default';

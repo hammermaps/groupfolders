@@ -13,7 +13,6 @@ use OCA\GroupFolders\Db\Tag;
 use OCA\GroupFolders\Db\TagMapper;
 use OCA\GroupFolders\Errors\TagNotFound;
 use OCP\AppFramework\Db\DoesNotExistException;
-use OCP\AppFramework\Db\MultipleObjectsReturnedException;
 
 class TagService {
 	public function __construct(
@@ -59,11 +58,8 @@ class TagService {
 	public function find(int $groupFolderId, string $tagKey): Tag {
 		try {
 			return $this->mapper->find($groupFolderId, $tagKey);
-		} catch (\Exception $e) {
-			if ($e instanceof DoesNotExistException || $e instanceof MultipleObjectsReturnedException) {
-				throw new TagNotFound($groupFolderId, $tagKey);
-			}
-			throw $e;
+		} catch (DoesNotExistException) {
+			throw new TagNotFound($groupFolderId, $tagKey);
 		}
 	}
 
@@ -112,11 +108,8 @@ class TagService {
 			$tag = $this->mapper->find($groupFolderId, $tagKey);
 			$this->mapper->delete($tag);
 			return $tag;
-		} catch (\Exception $e) {
-			if ($e instanceof DoesNotExistException || $e instanceof MultipleObjectsReturnedException) {
-				throw new TagNotFound($groupFolderId, $tagKey);
-			}
-			throw $e;
+		} catch (DoesNotExistException) {
+			throw new TagNotFound($groupFolderId, $tagKey);
 		}
 	}
 

@@ -17,7 +17,11 @@ abstract class NotFoundException extends \RuntimeException {
 	public function __construct(string $entity, array|string $criteria) {
 		$parts = explode('\\', $entity);
 		$entityName = class_exists($entity) ? array_pop($parts) : $entity;
-		$criteriaString = is_string($criteria) ? $criteria : json_encode($criteria);
+		try {
+			$criteriaString = is_string($criteria) ? $criteria : json_encode($criteria, JSON_THROW_ON_ERROR);
+		} catch (\JsonException) {
+			$criteriaString = '(unencodable criteria)';
+		}
 		$message = sprintf('Could not find %s with criteria %s', $entityName, $criteriaString);
 		parent::__construct($message);
 	}

@@ -48,7 +48,7 @@ class GetTag extends TagCommand {
 
 			return 0;
 		} catch (Exception $e) {
-			$output->writeln('<error>Exception "' . $e->getMessage() . '" at ' . $e->getFile() . ' line ' . $e->getLine() . '</error>');
+			$output->writeln('<error>' . $e->getMessage() . '</error>');
 			return 1;
 		}
 	}
