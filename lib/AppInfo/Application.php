@@ -76,6 +76,13 @@ class Application extends App implements IBootstrap {
 
 	#[\Override]
 	public function register(IRegistrationContext $context): void {
+		// Compatibility shim: IPartialMountProvider was introduced in NC 33.0.0.
+		// On NC 32 the interface is absent, so we define it ourselves before any
+		// class that implements it is loaded by the autoloader.
+		if (!interface_exists(\OCP\Files\Config\IPartialMountProvider::class)) {
+			require_once __DIR__ . '/../Compat/IPartialMountProviderCompat.php';
+		}
+
 		/** Register $principalBackend for the DAV collection */
 		$context->registerServiceAlias('principalBackend', Principal::class);
 
