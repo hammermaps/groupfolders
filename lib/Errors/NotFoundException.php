@@ -15,7 +15,8 @@ abstract class NotFoundException extends \RuntimeException {
 	 * @param array<string, mixed>|string $criteria
 	 */
 	public function __construct(string $entity, array|string $criteria) {
-		$entityName = class_exists($entity) ? array_pop(explode('\\', $entity)) : $entity;
+		$parts = explode('\\', $entity);
+		$entityName = class_exists($entity) ? array_pop($parts) : $entity;
 		$criteriaString = is_string($criteria) ? $criteria : json_encode($criteria);
 		$message = sprintf('Could not find %s with criteria %s', $entityName, $criteriaString);
 		parent::__construct($message);
