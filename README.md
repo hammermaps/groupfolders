@@ -134,6 +134,9 @@ If you're unfamiliar with `occ` see [Using the occ command](https://docs.nextclo
 - `occ groupfolders:scan <folder_id>` &rarr; trigger a filescan for a Team folder
 - `occ groupfolders:trashbin:cleanup` &rarr; empty the trashbin of all Team folders
 - `occ config:app:set groupfolders enable_encryption --value="true"` &rarr; activate encryption (server-side) support
+- `occ groupfolders:tag:set <folder_id> <key> [<value>]` &rarr; add or update a key-value tag on a Team folder
+- `occ groupfolders:tag:get <folder_id> [<key>]` &rarr; get one or all tags for a Team folder (omit `<key>` to list all tags)
+- `occ groupfolders:tag:find-groupfolders <key> [<value>]` &rarr; find all Team folders that have a given tag key, optionally filtered by value
 
 ### Configuring Advanced Permissions via `occ`
 
@@ -172,6 +175,37 @@ To manage the users or groups entitled to set advanced permissions, use `occ gro
 #### Disabling
 
 To disable the advanced permissions feature for a Team folder, use `occ groupfolders:permissions <folder_id> --disable`.
+
+## Tag Management
+
+Team folders support key-value tags that can be used to categorize and find folders programmatically. Tags are stored in the `groupfolder_tags` database table and are managed exclusively via OCC commands.
+
+### Managing Tags
+
+**Add or update a tag:**
+```bash
+occ groupfolders:tag:set <folder_id> <key> [<value>]
+```
+
+**Get tag(s) for a Team folder:**
+```bash
+# Get a specific tag
+occ groupfolders:tag:get <folder_id> <key>
+
+# Get all tags for a folder (omit key)
+occ groupfolders:tag:get <folder_id>
+```
+
+**Find Team folders by tag:**
+```bash
+# Find all folders that have a given tag key
+occ groupfolders:tag:find-groupfolders <key>
+
+# Filter by key and value
+occ groupfolders:tag:find-groupfolders <key> <value>
+```
+
+All tag commands support `--output=json` for machine-readable output.
 
 ## APIs
 
