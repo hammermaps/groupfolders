@@ -38,7 +38,8 @@ class UserMappingManager implements IUserMappingManager {
 	#[\Override]
 	public function getMappingsForUser(IUser $user, bool $userAssignable = true): array {
 		$uid = $user->getUID();
-		$cached = $this->mappingsCache->get($uid);
+		$cacheKey = $uid . ':' . ($userAssignable ? '1' : '0');
+		$cached = $this->mappingsCache->get($cacheKey);
 		if ($cached !== null) {
 			return $cached;
 		}
@@ -50,7 +51,7 @@ class UserMappingManager implements IUserMappingManager {
 			new UserMapping('user', $uid, $user->getDisplayName()),
 		], $groupMappings, $circleMappings);
 
-		$this->mappingsCache->set($uid, $mappings);
+		$this->mappingsCache->set($cacheKey, $mappings);
 		return $mappings;
 	}
 

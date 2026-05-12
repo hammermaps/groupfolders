@@ -27,7 +27,9 @@ class ACLManagerFactory {
 
 	public function getACLManager(IUser $user): ACLManager {
 		$uid = $user->getUID();
-		$cached = $this->cache->get($uid);
+		$inheritPerUser = $this->config->getValueString('groupfolders', 'acl-inherit-per-user', 'false') === 'true';
+		$cacheKey = $uid . ':' . ($inheritPerUser ? '1' : '0');
+		$cached = $this->cache->get($cacheKey);
 		if ($cached !== null) {
 			return $cached;
 		}
@@ -36,9 +38,9 @@ class ACLManagerFactory {
 			$this->ruleManager,
 			$this->userMappingManager,
 			$user,
-			$this->config->getValueString('groupfolders', 'acl-inherit-per-user', 'false') === 'true',
+			$inheritPerUser,
 		);
-		$this->cache->set($uid, $manager);
+		$this->cache->set($cacheKey, $manager);
 		return $manager;
 	}
 }
