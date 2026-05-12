@@ -26,7 +26,7 @@ class Version2100000Date20251104151854 extends SimpleMigrationStep {
 		if (!$table->hasColumn('acl_default_no_permission')) {
 			$table->addColumn('acl_default_no_permission', Types::BOOLEAN, [
 				'notnull' => true,
-				'default' => false,
+				'default' => 0,
 			]);
 
 			return $schema;
