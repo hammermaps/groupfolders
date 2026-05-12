@@ -24,9 +24,9 @@ class Version2100000Date20251104151854 extends SimpleMigrationStep {
 
 		$table = $schema->getTable('group_folders');
 		if (!$table->hasColumn('acl_default_no_permission')) {
-			$table->addColumn('acl_default_no_permission', Types::BOOLEAN, [
+			$table->addColumn('acl_default_no_permission', 'integer', [
 				'notnull' => true,
-				'default' => false,
+				'default' => 0,
 			]);
 
 			return $schema;
