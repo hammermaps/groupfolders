@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace OCP\Files\Config;
 
+use OCP\Files\Mount\IMountPoint;
 use OCP\Files\Storage\IStorageFactory;
 
 /**
@@ -30,7 +31,7 @@ interface IPartialMountProvider extends IMountProvider {
 	 * @param bool $forChildren when true, only child mounts for $setupPathHint were requested.
 	 * @param array $mountProviderArgs The data for the mount which should be provided.
 	 * @param IStorageFactory $loader
-	 * @return array<string, \OCP\Files\Mount\IMountPoint> IMountPoint instances, indexed by mount-point
+	 * @return array<string, IMountPoint> IMountPoint instances, indexed by mount-point
 	 */
 	public function getMountsForPath(
 		string $setupPathHint,
