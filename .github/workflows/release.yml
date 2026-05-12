@@ -1,0 +1,83 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Read app version from tag
+        id: vars
+        run: |
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release directory
+        run: |
+          rm -rf build/release
+          mkdir -p build/release/groupfolders
+
+          rsync -a ./ build/release/groupfolders/ \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='build' \
+            --exclude='src' \
+            --exclude='tests' \
+            --exclude='cypress' \
+            --exclude='vendor' \
+            --exclude='vendor-bin' \
+            --exclude='package.json' \
+            --exclude='package-lock.json' \
+            --exclude='composer.json' \
+            --exclude='composer.lock' \
+            --exclude='Makefile' \
+            --exclude='krankerl.toml' \
+            --exclude='tsconfig.json' \
+            --exclude='vite.config.ts' \
+            --exclude='cypress.config.ts' \
+            --exclude='phpstan.neon' \
+            --exclude='rector.php' \
+            --exclude='openapi.json' \
+            --exclude='.gitignore' \
+            --exclude='.nextcloudignore' \
+            --exclude='.l10nignore' \
+            --exclude='.eslintrc.json' \
+            --exclude='.php-cs-fixer.dist.php' \
+            --exclude='stylelint.config.cjs'
+
+      - name: Create release archives
+        run: |
+          cd build/release
+          tar -czf groupfolders-${{ steps.vars.outputs.version }}.tar.gz groupfolders
+          zip -r groupfolders-${{ steps.vars.outputs.version }}.zip groupfolders
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/release/groupfolders-${{ steps.vars.outputs.version }}.tar.gz
+            build/release/groupfolders-${{ steps.vars.outputs.version }}.zip
+          generate_release_notes: true
