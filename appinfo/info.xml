@@ -67,6 +67,9 @@ Folder.
 		<command>OCA\GroupFolders\Command\Delete</command>
 		<command>OCA\GroupFolders\Command\Scan</command>
 		<command>OCA\GroupFolders\Command\Trashbin\Cleanup</command>
+		<command>OCA\GroupFolders\Command\Tag\SetTag</command>
+		<command>OCA\GroupFolders\Command\Tag\GetTag</command>
+		<command>OCA\GroupFolders\Command\Tag\FindGroupfolders</command>
 	</commands>
 
 	<settings>
