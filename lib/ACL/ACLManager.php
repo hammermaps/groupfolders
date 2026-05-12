@@ -19,6 +19,8 @@ use OCP\Server;
 class ACLManager {
 	/** @var CappedMemoryCache<Rule[]> */
 	private readonly CappedMemoryCache $ruleCache;
+	/** @var CappedMemoryCache<int> */
+	private readonly CappedMemoryCache $basePermissionCache;
 
 	public function __construct(
 		private readonly RuleManager $ruleManager,
@@ -27,6 +29,7 @@ class ACLManager {
 		private readonly bool $inheritMergePerUser = false,
 	) {
 		$this->ruleCache = new CappedMemoryCache();
+		$this->basePermissionCache = new CappedMemoryCache();
 	}
 
 	/**
@@ -267,6 +270,11 @@ class ACLManager {
 	}
 
 	public function getBasePermission(int $folderId): int {
+		$cached = $this->basePermissionCache->get((string)$folderId);
+		if ($cached !== null) {
+			return $cached;
+		}
+
 		// Can't use DI as it triggers an infinite loop
 		$folderManager = Server::get(FolderManager::class);
 
@@ -275,12 +283,15 @@ class ACLManager {
 			if ($user !== null && $folderManager->canManageACL($folderId, $user)) {
 				// Give any ACL manager at least read permission, so they are able to navigate the folders and configure the ACLs.
 				// Otherwise they are locked out completely. For default all permission we already prevent a self-lockout.
-				return Constants::PERMISSION_READ;
+				$permission = Constants::PERMISSION_READ;
+			} else {
+				$permission = 0;
 			}
-
-			return 0;
+		} else {
+			$permission = Constants::PERMISSION_ALL;
 		}
 
-		return Constants::PERMISSION_ALL;
+		$this->basePermissionCache->set((string)$folderId, $permission);
+		return $permission;
 	}
 }

@@ -14,6 +14,7 @@ use OCA\Circles\Exceptions\CircleNotFoundException;
 use OCA\Circles\Model\Circle;
 use OCA\Circles\Model\Probes\CircleProbe;
 use OCP\AutoloadNotAllowedException;
+use OCP\Cache\CappedMemoryCache;
 use OCP\IGroup;
 use OCP\IGroupManager;
 use OCP\IUser;
@@ -23,21 +24,34 @@ use Psr\Container\ContainerExceptionInterface;
 use Psr\Log\LoggerInterface;
 
 class UserMappingManager implements IUserMappingManager {
+	/** @var CappedMemoryCache<list<UserMapping>> */
+	private readonly CappedMemoryCache $mappingsCache;
+
 	public function __construct(
 		private readonly IGroupManager $groupManager,
 		private readonly IUserManager $userManager,
 		private readonly LoggerInterface $logger,
 	) {
+		$this->mappingsCache = new CappedMemoryCache();
 	}
 
 	#[\Override]
 	public function getMappingsForUser(IUser $user, bool $userAssignable = true): array {
-		$groupMappings = array_values(array_map(fn (IGroup $group): UserMapping => new UserMapping('group', $group->getGID(), $group->getDisplayName()), $this->groupManager->getUserGroups($user)));
-		$circleMappings = array_map(fn (Circle $circle): UserMapping => new UserMapping('circle', $circle->getSingleId(), $circle->getDisplayName()), $this->getUserCircles($user->getUID()));
+		$uid = $user->getUID();
+		$cached = $this->mappingsCache->get($uid);
+		if ($cached !== null) {
+			return $cached;
+		}
 
-		return array_merge([
-			new UserMapping('user', $user->getUID(), $user->getDisplayName()),
+		$groupMappings = array_values(array_map(fn (IGroup $group): UserMapping => new UserMapping('group', $group->getGID(), $group->getDisplayName()), $this->groupManager->getUserGroups($user)));
+		$circleMappings = array_map(fn (Circle $circle): UserMapping => new UserMapping('circle', $circle->getSingleId(), $circle->getDisplayName()), $this->getUserCircles($uid));
+
+		$mappings = array_merge([
+			new UserMapping('user', $uid, $user->getDisplayName()),
 		], $groupMappings, $circleMappings);
+
+		$this->mappingsCache->set($uid, $mappings);
+		return $mappings;
 	}
 
 	#[\Override]

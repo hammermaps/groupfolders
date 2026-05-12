@@ -25,6 +25,7 @@ use OCA\GroupFolders\Mount\GroupMountPoint;
 use OCA\GroupFolders\ResponseDefinitions;
 use OCP\AppFramework\OCS\OCSBadRequestException;
 use OCP\AutoloadNotAllowedException;
+use OCP\Cache\CappedMemoryCache;
 use OCP\Constants;
 use OCP\DB\Exception;
 use OCP\DB\QueryBuilder\IQueryBuilder;
@@ -59,6 +60,9 @@ use Psr\Log\LoggerInterface;
 class FolderManager {
 	public const SPACE_DEFAULT = -4;
 
+	/** @var CappedMemoryCache<bool> */
+	private readonly CappedMemoryCache $aclDefaultNoPermissionCache;
+
 	public function __construct(
 		private readonly IDBConnection $connection,
 		private readonly IGroupManager $groupManager,
@@ -70,6 +74,7 @@ class FolderManager {
 		private readonly FolderStorageManager $folderStorageManager,
 		private readonly IAppConfig $appConfig,
 	) {
+		$this->aclDefaultNoPermissionCache = new CappedMemoryCache();
 	}
 
 	/**
@@ -956,6 +961,7 @@ class FolderManager {
 
 			$this->connection->commit();
 
+			$this->aclDefaultNoPermissionCache->remove((string)$folderId);
 			$this->eventDispatcher->dispatchTyped(new CriticalActionPerformedEvent('The groupfolder with id %d was removed', [$folderId]));
 
 			$this->updateOverwriteHomeFolders();
@@ -1192,6 +1198,11 @@ class FolderManager {
 	}
 
 	public function hasFolderACLDefaultNoPermission(int $folderId): bool {
+		$cached = $this->aclDefaultNoPermissionCache->get((string)$folderId);
+		if ($cached !== null) {
+			return $cached;
+		}
+
 		$qb = $this->connection->getQueryBuilder();
 
 		$query = $qb
@@ -1203,6 +1214,7 @@ class FolderManager {
 		$hasDefaultNoPermission = (bool)$result->fetchOne();
 		$result->closeCursor();
 
+		$this->aclDefaultNoPermissionCache->set((string)$folderId, $hasDefaultNoPermission);
 		return $hasDefaultNoPermission;
 	}
 

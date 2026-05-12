@@ -9,23 +9,36 @@ declare(strict_types=1);
 namespace OCA\GroupFolders\ACL;
 
 use OCA\GroupFolders\ACL\UserMapping\IUserMappingManager;
+use OCP\Cache\CappedMemoryCache;
 use OCP\IAppConfig;
 use OCP\IUser;
 
 class ACLManagerFactory {
+	/** @var CappedMemoryCache<ACLManager> */
+	private readonly CappedMemoryCache $cache;
+
 	public function __construct(
 		private readonly RuleManager $ruleManager,
 		private readonly IAppConfig $config,
 		private readonly IUserMappingManager $userMappingManager,
 	) {
+		$this->cache = new CappedMemoryCache();
 	}
 
 	public function getACLManager(IUser $user): ACLManager {
-		return new ACLManager(
+		$uid = $user->getUID();
+		$cached = $this->cache->get($uid);
+		if ($cached !== null) {
+			return $cached;
+		}
+
+		$manager = new ACLManager(
 			$this->ruleManager,
 			$this->userMappingManager,
 			$user,
 			$this->config->getValueString('groupfolders', 'acl-inherit-per-user', 'false') === 'true',
 		);
+		$this->cache->set($uid, $manager);
+		return $manager;
 	}
 }
