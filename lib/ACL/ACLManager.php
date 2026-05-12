@@ -13,7 +13,6 @@ use OCA\GroupFolders\Folder\FolderManager;
 use OCP\Cache\CappedMemoryCache;
 use OCP\Constants;
 use OCP\IUser;
-use OCP\IUserSession;
 use OCP\Server;
 
 class ACLManager {
@@ -44,7 +43,10 @@ class ACLManager {
 		// might discard former cached entries, so we can't assume they'll stay
 		// cached, so we read everything out initially to be able to return it
 		/** @var array<string, Rule[]> $rules */
-		$rules = array_combine($paths, array_map($this->ruleCache->get(...), $paths));
+		$rules = array_combine(
+			$paths,
+			array_map(fn (string $path): ?array => $this->ruleCache->get($storageId . ':' . $path), $paths)
+		);
 
 		$nonCachedPaths = array_filter($paths, fn (string $path): bool => !isset($rules[$path]));
 
@@ -52,7 +54,7 @@ class ACLManager {
 			$newRules = $this->ruleManager->getRulesForFilesByPath($this->user, $storageId, $nonCachedPaths);
 			foreach ($newRules as $path => $rulesForPath) {
 				if ($cache) {
-					$this->ruleCache->set($path, $rulesForPath);
+					$this->ruleCache->set($storageId . ':' . $path, $rulesForPath);
 				}
 
 				$rules[$path] = $rulesForPath;
@@ -78,7 +80,7 @@ class ACLManager {
 		foreach ($newRules as $storageId => $paths) {
 			foreach ($paths as $path => $rulesForPath) {
 				if ($cache) {
-					$this->ruleCache->set($path, $rulesForPath);
+					$this->ruleCache->set($storageId . ':' . $path, $rulesForPath);
 				}
 
 				$rules[$storageId] ??= [];
@@ -279,8 +281,7 @@ class ACLManager {
 		$folderManager = Server::get(FolderManager::class);
 
 		if ($folderManager->hasFolderACLDefaultNoPermission($folderId)) {
-			$user = Server::get(IUserSession::class)->getUser();
-			if ($user !== null && $folderManager->canManageACL($folderId, $user)) {
+			if ($folderManager->canManageACL($folderId, $this->user)) {
 				// Give any ACL manager at least read permission, so they are able to navigate the folders and configure the ACLs.
 				// Otherwise they are locked out completely. For default all permission we already prevent a self-lockout.
 				$permission = Constants::PERMISSION_READ;
